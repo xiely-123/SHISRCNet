@@ -10,9 +10,7 @@ School of Software and Microelectronics, Peking University, Beijing
 
 ### eg: in HR_groudtruth_test_classification_2.txt
 
-                                            data path                                                                                              |    label
-
-/home/xly/data/BreaKHis_v1/histology_slides_resize/breast/malignant/SOB/mucinous_carcinoma/SOB_M_MC_14-16456/100X/SOB_M_MC-14-16456-100-051.png    |      1
+/home/xly/data/BreaKHis_v1/histology_slides_resize/breast/malignant/SOB/mucinous_carcinoma/SOB_M_MC_14-16456/100X/SOB_M_MC-14-16456-100-051.png (data path)    |      1 ( label)
 
 ## Training & Test
 python train_SHISRCNet.py
