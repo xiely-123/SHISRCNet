@@ -22,9 +22,10 @@ import SRResNet_class as SRmodel_res
 import dataloader_torch_SRC as dl
 import torch.utils.data as Data
 import loss_FL
+
 os.environ['CUDA_VISIBLE_DEVICES'] = '1'   ####gpu选择，可以修改设置GPU数量，2,3等数字是GPU序号
-batch_size = 12
-batch_size1 = 200
+batch_size = 4
+batch_size1 = 10
 lr = 1e-3
 
 net = SRmodel_res.SIHSRCNet()
@@ -40,12 +41,43 @@ print(device)###显示gpu是否占用上，cuda:0--表示GPU已正常使用
 
 
 
+LABELS = torch.cat([torch.arange(batch_size) for i in range(1)], dim=0)
+LABELS = (LABELS.unsqueeze(0) == LABELS.unsqueeze(1)).float() #one-hot representations
+LABELS = LABELS.to(device)
+
+def ntxent_loss(features, features_1, temp=2):
+    """
+    NT-Xent Loss.
+
+    Args:
+    z1: The learned representations from first branch of projection head
+    z2: The learned representations from second branch of projection head
+    Returns:
+    Loss
+    """
+    similarity_matrix = torch.matmul(features, features.T)
+    mask = torch.eye(LABELS.shape[0], dtype=torch.bool).to(device)
+    labels = LABELS[~mask].view(LABELS.shape[0], -1)
+    similarity_matrix = similarity_matrix[~mask].view(similarity_matrix.shape[0], -1)
+
+    positives = similarity_matrix[labels.bool()].view(labels.shape[0], -1)
+
+    negatives = similarity_matrix[~labels.bool()].view(similarity_matrix.shape[0], -1)
+
+    logits = torch.cat([positives, negatives], dim=1)
+    labels = torch.zeros(logits.shape[0], dtype=torch.long).to(device)
+
+    logits = logits / temp
+    return logits, labels
+
+
+
 
 #net=ml.Unet(1,2).to(device)
 net=net.double()  #更改net数据类型double
 criterion = torch.nn.L1Loss()#torch.nn.MSELoss()#torch.nn.SmoothL1Loss()####nn.CrossEntropyLoss()  #####loss函数采用CE准则loss，Torch自带的CrossEntropyLoss
 criterion2 = loss_FL.FocalLoss(2)#nn.CrossEntropyLoss()
-#criterion = FL.FocalLoss( )
+criterion1 = nn.CrossEntropyLoss()
 optimizer = optim.Adam(net.parameters(), lr=lr)  ########优化器采用Adam，学习率采用1e-4，Torch自带的Adam
 
 
@@ -104,18 +136,20 @@ for epoch in range(start_epoch,num_epochs):
         inputs1 = Variable(batchLR).to(device)  #######Train
         target_SR = Variable(batchHR).to(device)
         target_class = Variable(batchLabel).to(device)
-        outSR, outClass= net(inputs1)
+        outSR, outClass, feature ,outClass_1, feature_1= net(inputs1,target_SR)
         #print(out1.shape)
         #out = out.reshape(batch_size,-1)
         #target = target.reshape(batch_size,-1)
-        loss = 0.8*criterion(outSR,target_SR) + 0.2*criterion2(outClass,target_class) #####out*inputs1.double()
+        logits, labels = ntxent_loss(feature,feature_1)
+        loss = 0.6*criterion(outSR,target_SR) + 0.3*(0.5*criterion2(outClass,target_class)+0.5*criterion2(outClass_1,target_class)) + 0.1*criterion1(logits, labels) #####out*inputs1.double()
+        #0.8*criterion(outSR,target_SR) + 0.2*criterion2(outClass,target_class)
         optimizer.zero_grad()           #归零梯度，每次反向传播前都要归零梯度，不然梯度会累积，造成结果不收敛
         loss.backward()                 #反向传播
         optimizer.step()                #更新参数
         train_time = time.time() - start_time 
         loss_ave = loss_ave + loss.item()
         #loss_ave_re = loss_ave_re + loss_re.item()
-    print('\r','Epoch[{}/{}],Process[{}/{}],loss:{:.6f},ave_loss:{:.6f},ave_loss_re:{:.6f},time:{:.3f},leanring_rate:{:.6f}'.format(epoch + 1, num_epochs, i + 1, int(len(Train_list)/batch_size)+1, loss.item(), loss_ave/(i+1), loss_ave/(i+1), train_time, param_group['lr']),end='')
+        print('\r','Epoch[{}/{}],Process[{}/{}],loss:{:.6f},ave_loss:{:.6f},ave_loss_re:{:.6f},time:{:.3f},leanring_rate:{:.6f}'.format(epoch + 1, num_epochs, i + 1, int(len(Train_list)/batch_size)+1, loss.item(), loss_ave/(i+1), loss_ave/(i+1), train_time, param_group['lr']),end='')
     print("         ")
     torch.save(net, "./SHISRCNet_x4/"+str(epoch + 1)+"my_model.pth")###model_SRResNet_x8_L1 -> 4
     
@@ -131,8 +165,8 @@ for epoch in range(start_epoch,num_epochs):
             
             batchLR,batchHR,_ = dataset
             inputs1 = Variable(batchLR).to(device)  #######Train
-            
-            out= net(inputs1)[0].cpu().numpy().squeeze(0)
+            target_SR = Variable(batchHR).to(device)
+            out= net(inputs1,target_SR)[0].cpu().numpy().squeeze(0)
             batchHR = batchHR.numpy().squeeze(0)
             #print(batchHR.shape,out.shape)
             single_PSNR = compare_psnr(batchHR.T ,out.T )#.astype('uint8')
@@ -147,10 +181,11 @@ for epoch in range(start_epoch,num_epochs):
         running_corrects_test = torch.zeros(1).squeeze().cuda()      
         for i,dataset in enumerate(loader_test_40X):
             
-            image,_,label = dataset 
+            image,batchHR,label = dataset 
             inputs1 = Variable(image).to(device)  #######Train
+            target_SR = Variable(batchHR).to(device)
             target = Variable(label).to(device)
-            _,out= net(inputs1)
+            _,out,_,_,_= net(inputs1,target_SR)
             _ , prediction =  torch.max(out,1)
             running_corrects_test = running_corrects_test + torch.sum(prediction == target)
             #print(torch.sum(prediction == target))
@@ -160,10 +195,11 @@ for epoch in range(start_epoch,num_epochs):
         running_corrects_test = torch.zeros(1).squeeze().cuda()      
         for i,dataset in enumerate(loader_test_100X):
             
-            image,_,label = dataset 
+            image,batchHR,label = dataset 
             inputs1 = Variable(image).to(device)  #######Train
+            target_SR = Variable(batchHR).to(device)
             target = Variable(label).to(device)
-            _,out= net(inputs1)
+            _,out,_,_,_= net(inputs1,target_SR)
             _ , prediction =  torch.max(out,1)
             running_corrects_test = running_corrects_test + torch.sum(prediction == target)
             #print(torch.sum(prediction == target))
@@ -173,10 +209,11 @@ for epoch in range(start_epoch,num_epochs):
         running_corrects_test = torch.zeros(1).squeeze().cuda()      
         for i,dataset in enumerate(loader_test_200X):
             
-            image,_,label = dataset 
+            image,batchHR,label = dataset 
             inputs1 = Variable(image).to(device)  #######Train
+            target_SR = Variable(batchHR).to(device)
             target = Variable(label).to(device)
-            _,out= net(inputs1)
+            _,out,_,_,_= net(inputs1,target_SR)
             _ , prediction =  torch.max(out,1)
             running_corrects_test = running_corrects_test + torch.sum(prediction == target)
             #print(torch.sum(prediction == target))
@@ -185,10 +222,11 @@ for epoch in range(start_epoch,num_epochs):
         running_corrects_test = torch.zeros(1).squeeze().cuda()
         for i,dataset in enumerate(loader_test_400X):
             
-            image,_,label = dataset 
+            image,batchHR,label = dataset 
             inputs1 = Variable(image).to(device)  #######Train
+            target_SR = Variable(batchHR).to(device)
             target = Variable(label).to(device)
-            _,out= net(inputs1)
+            _,out,_,_,_= net(inputs1,target_SR)
             _ , prediction =  torch.max(out,1)
             running_corrects_test = running_corrects_test + torch.sum(prediction == target)
             #print(torch.sum(prediction == target))

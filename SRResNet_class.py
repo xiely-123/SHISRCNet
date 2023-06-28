@@ -329,9 +329,10 @@ class CF(nn.Module):
     def forward(self, x):
         feature = self.backbone(x)
         #print(feature.size())
-        results = self.fc(self.FPN(feature))
-        return results
-
+        feature = self.FPN(feature)
+        results = self.fc(feature)
+        return feature,results
+ 
 
 """
 x = torch.rand(3,3,384,384) 
@@ -347,10 +348,11 @@ class SIHSRCNet(nn.Module):
         super(SIHSRCNet, self).__init__()
         self.SRNet = SRResNet()
         self.classNet = CF(2)
-    def forward(self, x):
+    def forward(self, x, y):
         _,SR = self.SRNet(x)
-        results = self.classNet(SR)
-        return SR,results
+        results, feature = self.classNet(SR)
+        results_1, feature_1 = self.classNet(y)
+        return SR,results,feature,results_1, feature_1
 """
 x = torch.rand(10,3,192,192)
 #x1 =  torch.rand(1,64,192,192)
