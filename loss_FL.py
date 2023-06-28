@@ -71,6 +71,35 @@ class FocalLoss(nn.Module):
             loss = batch_loss.sum()
         return loss
 
+
+
+def ntxent_loss(features, temp=2):
+    """
+    NT-Xent Loss.
+
+    Args:
+    z1: The learned representations from first branch of projection head
+    z2: The learned representations from second branch of projection head
+    Returns:
+    Loss
+    """
+    similarity_matrix = torch.matmul(features, features.T)
+    mask = torch.eye(LABELS.shape[0], dtype=torch.bool).to(DEVICE)
+    labels = LABELS[~mask].view(LABELS.shape[0], -1)
+    similarity_matrix = similarity_matrix[~mask].view(similarity_matrix.shape[0], -1)
+
+    positives = similarity_matrix[labels.bool()].view(labels.shape[0], -1)
+
+    negatives = similarity_matrix[~labels.bool()].view(similarity_matrix.shape[0], -1)
+
+    logits = torch.cat([positives, negatives], dim=1)
+    labels = torch.zeros(logits.shape[0], dtype=torch.long).to(DEVICE)
+
+    logits = logits / temp
+    return logits, labels
+
+
+
 """
 x=torch.randn(1, 5)
 print(torch.randn(1))
